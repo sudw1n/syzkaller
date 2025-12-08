@@ -73,6 +73,8 @@ const int kCoverFd = kOutPipeFd - kMaxThreads;
 const int kExtraCoverFd = kCoverFd - 1;
 const int kMaxArgs = 9;
 const int kCoverSize = 512 << 10;
+const int ijonMapSize = 1 << 16; // in terms of bytes
+const int ijonMaxSize = 512; // in terms of longs
 const int kFailStatus = 67;
 
 // Two approaches of dealing with kcov memory.
@@ -378,6 +380,11 @@ struct cover_t {
 	bool overflow;
 	// True if cover_enable() was called for this object.
 	bool enabled;
+
+#if GOOS_linux
+	char* ijonbitmapptr;
+	char* ijonmaxptr;
+#endif
 };
 
 struct thread_t {

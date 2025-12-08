@@ -38,6 +38,8 @@ struct kcov_remote_arg {
 #define KCOV_DISABLE _IO('c', 101)
 #define KCOV_REMOTE_ENABLE _IOW('c', 102, kcov_remote_arg<0>)
 #define KCOV_RESET_TRACE _IO('c', 104)
+#define KCOV_INIT_IJON_STATE _IOR('c', 2, unsigned long)
+#define KCOV_INIT_IJON_MAX _IOR('c', 3, unsigned long)
 
 #define KCOV_SUBSYSTEM_COMMON (0x00ull << 56)
 #define KCOV_SUBSYSTEM_USB (0x01ull << 56)
@@ -114,6 +116,15 @@ static void cover_open(cover_t* cov, bool extra)
 								       : kCoverSize;
 	if (ioctl(cov->fd, kcov_init_trace, cover_size))
 		fail("cover init trace write failed");
+
+#if GOOS_linux
+	if (ioctl(cov->fd, KCOV_INIT_IJON_STATE, ijonMapSize))
+		fail("cover init ijon state write failed");
+
+	if (ioctl(cov->fd, KCOV_INIT_IJON_MAX, ijonMaxSize))
+		fail("cover init ijon max write failed");
+#endif
+
 	cov->data_size = cover_size * (is_kernel_64_bit ? 8 : 4);
 	if (pkeys_enabled)
 		debug("pkey protection enabled\n");
@@ -151,21 +162,31 @@ static void cover_mmap(cover_t* cov)
 	if (cov->data_size == 0)
 		fail("cover_t structure is corrupted");
 	// Allocate kcov buffer plus two guard pages surrounding it.
-	cov->mmap_alloc_size = cov->data_size + 2 * SYZ_PAGE_SIZE;
+#if GOOS_linux
+	const auto actual_size = cov->data_size + ijonMapSize + ijonMaxSize * (is_kernel_64_bit ? 8 : 4);
+#else
+	const auto actual_size = cov->data_size;
+#endif
+	cov->mmap_alloc_size = actual_size + 2 * SYZ_PAGE_SIZE;
 	cov->mmap_alloc_ptr = (char*)mmap(NULL, cov->mmap_alloc_size,
 					  PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (cov->mmap_alloc_ptr == MAP_FAILED)
 		exitf("failed to preallocate kcov buffer");
 	// Now map the kcov buffer to the file, overwriting the existing mapping above.
 	int prot = flag_read_only_coverage ? PROT_READ : (PROT_READ | PROT_WRITE);
-	void* data_buf = (char*)mmap(cov->mmap_alloc_ptr + SYZ_PAGE_SIZE, cov->data_size,
+	void* data_buf = (char*)mmap(cov->mmap_alloc_ptr + SYZ_PAGE_SIZE, actual_size,
 				     prot, MAP_SHARED | MAP_FIXED, cov->fd, 0);
 	if (data_buf == MAP_FAILED)
 		exitf("cover mmap failed");
-	if (pkeys_enabled && pkey_mprotect(data_buf, cov->data_size, prot, RESERVED_PKEY))
+	if (pkeys_enabled && pkey_mprotect(data_buf, actual_size, prot, RESERVED_PKEY))
 		exitf("failed to pkey_mprotect kcov buffer");
 	cov->data = (char*)data_buf;
 	cov->data_end = cov->data + cov->data_size;
+#if GOOS_linux
+	// our IJON bit map stuff is after the KCOV data
+	cov->ijonbitmapptr = cov->data_end;
+	cov->ijonmaxptr = cov->ijonbitmapptr + ijonMapSize;
+#endif
 	cov->data_offset = is_kernel_64_bit ? sizeof(uint64_t) : sizeof(uint32_t);
 	cov->pc_offset = 0;
 }
@@ -229,6 +250,23 @@ template <typename cover_data_t>
 static void cover_collect_impl(cover_t* cov)
 {
 	cov->size = *(cover_data_t*)cov->data;
+#ifdef GOOS_linux
+	for (auto i = 0; i < ijonMapSize; ++i) {
+		if (cov->ijonbitmapptr[i] != 0) {
+			printf("[%d] 0x%x\n", i, cov->ijonbitmapptr[i]);
+		}
+	}
+	const auto ijonmaxptr = (cover_data_t*)cov->ijonbitmapptr;
+	for (auto i = 0; i < ijonMaxSize; ++i) {
+		if (ijonmaxptr[i] != 0) {
+			if (is_kernel_64_bit) {
+				printf("[%d] 0x%llx\n", i, (unsigned long long)ijonmaxptr[i]);
+			} else {
+				printf("[%d] 0x%lx\n", i, (unsigned long)ijonmaxptr[i]);
+			}
+		}
+	}
+#endif
 	cov->overflow = (cov->data + (cov->size + 2) * sizeof(cover_data_t)) > cov->data_end;
 }
 
