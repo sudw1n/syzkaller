@@ -1,6 +1,7 @@
 // Copyright 2015 syzkaller project authors. All rights reserved.
 // Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
 
+#include <assert.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -40,10 +41,6 @@ struct kcov_remote_arg {
 #define KCOV_RESET_TRACE _IO('c', 104)
 #define KCOV_INIT_IJON_STATE _IOR('c', 2, unsigned long)
 #define KCOV_INIT_IJON_MAX _IOR('c', 3, unsigned long)
-
-#define IJON_BITMAP_PREFIX (((uint64_t)0xAA) << 56)
-#define IJON_MAXMAP_PREFIX (((uint64_t)0xBB) << 56)
-
 #define KCOV_SUBSYSTEM_COMMON (0x00ull << 56)
 #define KCOV_SUBSYSTEM_USB (0x01ull << 56)
 
@@ -181,6 +178,9 @@ static void cover_mmap(cover_t* cov)
 	cov->data_end = cov->data + cov->data_size;
 	cov->data_offset = is_kernel_64_bit ? sizeof(uint64_t) : sizeof(uint32_t);
 	cov->pc_offset = 0;
+
+	cov->ijonbitmapptr = (uint8*)cov->data_end;
+	cov->ijonmaxptr = (uint64*)(cov->ijonbitmapptr + ijonMapSize);
 }
 
 static void cover_munmap(cover_t* cov)
@@ -244,22 +244,16 @@ static void cover_collect_impl(cover_t* cov)
 	cov->size = *(cover_data_t*)cov->data;
 	cov->overflow = (cov->data + (cov->size + 2) * sizeof(cover_data_t)) > cov->data_end;
 
-	/* for IJON stuff */
-
-	// our IJON bit map stuff is after the KCOV data
-	uint8* ijon_bitmap = (uint8*)cov->data_end;
 	cov->ijon_bitmap_size = 0;
 	for (auto i = 0; i < ijonMapSize; ++i) {
-		if (ijon_bitmap[i] != 0) {
-			cov->ijonbitmapptr[cov->ijon_bitmap_size++] = (IJON_BITMAP_PREFIX | ijon_bitmap[i]);
-		}
+		if (cov->ijonbitmapptr[i] != 0)
+			cov->ijon_bitmap_size++;
 	}
-	uint64* ijon_maxmap = (uint64*)ijon_bitmap + ijonMapSize;
+
 	cov->ijon_maxmap_size = 0;
 	for (auto i = 0; i < ijonMaxMapSize; ++i) {
-		if (ijon_maxmap[i] != 0) {
-			cov->ijonmaxptr[cov->ijon_maxmap_size++] = (IJON_MAXMAP_PREFIX | ijon_maxmap[i]);
-		}
+		if (cov->ijonmaxptr[i] != 0)
+			cov->ijon_maxmap_size++;
 	}
 }
 

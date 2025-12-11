@@ -382,9 +382,11 @@ struct cover_t {
 	bool enabled;
 
 #if GOOS_linux
-	uint64 ijonbitmapptr[(ijonMapSize / sizeof(uint64))];
+	uint8* ijonbitmapptr;
+	// number of non-null values
 	uint32 ijon_bitmap_size;
-	uint64 ijonmaxptr[ijonMaxMapSize];
+	uint64* ijonmaxptr;
+	// number of non-null values
 	uint32 ijon_maxmap_size;
 #endif
 };
@@ -1266,6 +1268,9 @@ uint32 write_signal(flatbuffers::FlatBufferBuilder& fbb, int index, cover_t* cov
 	return fbb.EndVector(nsig);
 }
 
+#define IJON_BITMAP_PREFIX (((uint64)0xAA) << 56)
+#define IJON_MAXMAP_PREFIX (((uint64)0xBB) << 56)
+
 template <typename cover_data_t>
 uint32 write_cover(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
 {
@@ -1275,7 +1280,8 @@ uint32 write_cover(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
 	uint32 total_size = cover_size + bitmap_size + maxmap_size;
 
 	cover_data_t* cover_data = (cover_data_t*)(cov->data + cov->data_offset);
-	uint64* bitmap_data = cov->ijonbitmapptr;
+
+	uint8* bitmap_data = cov->ijonbitmapptr;
 	uint64* maxmap_data = cov->ijonmaxptr;
 
 	if (flag_dedup_cover) {
@@ -1290,11 +1296,19 @@ uint32 write_cover(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
 	for (uint32 i = 0; i < cover_size; i++)
 		fbb.PushElement(uint64(cover_data[cover_size - i - 1] + cov->pc_offset));
 
-	for (uint32 i = 0; i < bitmap_size; i++)
-		fbb.PushElement(uint64(bitmap_data[bitmap_size - i - 1]));
+	for (uint32 i = 0; i < ijonMapSize; i++) {
+		const auto val = uint64(bitmap_data[ijonMapSize - i - 1]);
+		if (val != 0) {
+			fbb.PushElement(IJON_BITMAP_PREFIX | val);
+		}
+	}
 
-	for (uint32 i = 0; i < maxmap_size; i++)
-		fbb.PushElement(uint64(maxmap_data[maxmap_size - i - 1]));
+	for (uint32 i = 0; i < ijonMaxMapSize; i++) {
+		const auto val = uint64(maxmap_data[ijonMaxMapSize - i - 1]);
+		if (val != 0) {
+			fbb.PushElement(IJON_MAXMAP_PREFIX | val);
+		}
+	}
 
 	return fbb.EndVector(total_size);
 }
