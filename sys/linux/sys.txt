@@ -1423,3 +1423,16 @@ define KCOV_REMOTE_ENABLE	1075340134
 # setdomainname
 # sched_get_priority_max
 # sched_get_priority_min
+
+# DVKM stuff
+resource fd_dvkm[fd]
+
+dvkm_obj {
+	width		int32
+	height		int32
+	datasize	len[data, int32]
+	data		buffer[in]
+}
+
+openat$dvkm(fd const[AT_FDCWD], file ptr[in, string["/proc/dvkm"]], flags flags[open_flags], mode const[0]) fd_dvkm
+ioctl$dvkm(fd fd_dvkm, cmd const[0xc0184400], arg ptr[in, dvkm_obj])
