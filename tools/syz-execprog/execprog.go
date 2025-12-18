@@ -342,6 +342,11 @@ func (ctx *Context) printHints(p *prog.Prog, info *flatrpc.ProgInfo) {
 	log.Logf(0, "ncomps=%v ncandidates=%v", ncomps, ncandidates)
 }
 
+const (
+	IJON_BITMAP_PREFIX_BYTE = uint8(0xAA)
+	IJON_MAXMAP_PREFIX_BYTE = uint8(0xBB)
+)
+
 func (ctx *Context) dumpCallCoverage(coverFile string, info *flatrpc.CallInfo) {
 	if info == nil || len(info.Cover) == 0 {
 		return
@@ -349,8 +354,17 @@ func (ctx *Context) dumpCallCoverage(coverFile string, info *flatrpc.CallInfo) {
 	sysTarget := targets.Get(ctx.target.OS, ctx.target.Arch)
 	buf := new(bytes.Buffer)
 	for _, pc := range info.Cover {
-		prev := backend.PreviousInstructionPC(sysTarget, "", pc)
-		fmt.Fprintf(buf, "0x%x\n", prev)
+		// extract the top byte
+		top := pc >> 56
+		var out uint64
+		switch top {
+		case uint64(IJON_BITMAP_PREFIX_BYTE), uint64(IJON_MAXMAP_PREFIX_BYTE):
+			// If it's a IJON value, write it out as-is
+			out = pc
+		default:
+			out = backend.PreviousInstructionPC(sysTarget, "", pc)
+		}
+		fmt.Fprintf(buf, "0x%x\n", out)
 	}
 	err := osutil.WriteFile(coverFile, buf.Bytes())
 	if err != nil {
